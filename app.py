@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from models import db, Expense, Category, User
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///expenses.db"
@@ -31,9 +32,8 @@ def create_user():
     if existing:
         return jsonify({"error": "Email already registered"}), 400
 
-    # NOTE: storing plain text password here temporarily just for testing.
-    # In Phase 4 we'll hash this properly before saving.
-    user = User(name=data["name"], email=data["email"], password=data["password"])
+    hashed_password = generate_password_hash(data["password"])
+    user = User(name=data["name"], email=data["email"], password=hashed_password)
     db.session.add(user)
     db.session.commit()
 
@@ -44,6 +44,24 @@ def create_user():
 def get_users():
     users = User.query.all()
     return jsonify([{"id": u.id, "name": u.name, "email": u.email} for u in users]), 200
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json()
+
+    if not data or not data.get("email") or not data.get("password"):
+        return jsonify({"error": "email and password are required"}), 400
+
+    user = User.query.filter_by(email=data["email"]).first()
+
+    if not user or not check_password_hash(user.password, data["password"]):
+        return jsonify({"error": "Invalid email or password"}), 401
+
+    return jsonify({
+        "message": "Login successful",
+        "user": {"id": user.id, "name": user.name, "email": user.email}
+    }), 200
 
 
 # ---------------- CATEGORY ROUTES ----------------
