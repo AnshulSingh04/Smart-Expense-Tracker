@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from models import db, Expense, Category, User
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
+import pandas as pd
 
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///expenses.db"
@@ -185,6 +186,68 @@ def delete_expense(expense_id):
     db.session.delete(expense)
     db.session.commit()
     return jsonify({"message": "Expense deleted successfully"}), 200
+
+
+# ---------------- ANALYTICS / SUMMARY ROUTES ----------------
+
+@app.route("/summary/<int:user_id>", methods=["GET"])
+def get_summary(user_id):
+    """
+    Returns spending analytics for a user using Pandas:
+    - total spend
+    - category-wise breakdown
+    - month-wise breakdown
+    Optional query params: start_date, end_date (format YYYY-MM-DD)
+    """
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    query = Expense.query.filter_by(user_id=user_id)
+
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    if start_date:
+        query = query.filter(Expense.date >= datetime.strptime(start_date, "%Y-%m-%d").date())
+    if end_date:
+        query = query.filter(Expense.date <= datetime.strptime(end_date, "%Y-%m-%d").date())
+
+    expenses = query.all()
+
+    if not expenses:
+        return jsonify({
+            "total_spent": 0,
+            "category_breakdown": {},
+            "monthly_breakdown": {},
+            "message": "No expenses found for this user in the given range"
+        }), 200
+
+    # Convert to a Pandas DataFrame for analysis
+    data = [{
+        "amount": e.amount,
+        "date": e.date,
+        "category": e.category.name if e.category else "Uncategorized"
+    } for e in expenses]
+
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"])
+    df["month"] = df["date"].dt.strftime("%Y-%m")
+
+    total_spent = round(df["amount"].sum(), 2)
+
+    category_breakdown = df.groupby("category")["amount"].sum().round(2).to_dict()
+
+    monthly_breakdown = df.groupby("month")["amount"].sum().round(2).to_dict()
+
+    top_category = df.groupby("category")["amount"].sum().idxmax()
+
+    return jsonify({
+        "total_spent": total_spent,
+        "category_breakdown": category_breakdown,
+        "monthly_breakdown": monthly_breakdown,
+        "top_spending_category": top_category,
+        "number_of_expenses": len(expenses)
+    }), 200
 
 
 if __name__ == "__main__":
